@@ -216,7 +216,7 @@ public class JdkHttpTransport implements HttpTransport {
                                                     request,
                                                     responseBody,
                                                     requestStartNanos))
-                            .doFinally(signal -> closeQuietly(responseBody.getAndSet(null)))
+                            .doFinally(signal -> closeResponseBody(responseBody))
                             .onErrorMap(this::mapStreamError);
                 });
     }
@@ -312,28 +312,64 @@ public class JdkHttpTransport implements HttpTransport {
         boolean isNdjson =
                 TransportConstants.STREAM_FORMAT_NDJSON.equals(
                         request.getHeaders().get(TransportConstants.STREAM_FORMAT_HEADER));
+        String terminator =
+                isNdjson
+                        ? null
+                        : request.getHeaders().get(TransportConstants.STREAM_TERMINATOR_HEADER);
 
-        // Use Flux.using to manage resource lifecycle
-        return Flux.using(
-                        () ->
-                                new BufferedReader(
-                                        new InputStreamReader(inputStream, StandardCharsets.UTF_8)),
-                        reader -> isNdjson ? readNdJsonLines(reader) : readSseLines(reader),
-                        this::closeQuietly)
+        // The body is closed by the terminal signal's doFinally, never the reader: BufferedReader
+        // close() contends for the monitor held by a parked readLine(), which is the hang
+        // cancellation must avoid. Closing the raw stream does not take that monitor and wakes the
+        // parked read up instead.
+        return Flux.defer(
+                        () -> {
+                            BufferedReader reader =
+                                    new BufferedReader(
+                                            new InputStreamReader(
+                                                    inputStream, StandardCharsets.UTF_8));
+                            return isNdjson
+                                    ? readNdJsonLines(reader)
+                                    : readSseLines(reader, terminator);
+                        })
                 // reader.lines() uses blocking I/O internally
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
     /**
      * Extract non-empty SSE data payloads and stop before the terminal marker.
+     *
+     * <p>When {@code terminator} is non-null (caller's {@code STREAM_TERMINATOR_HEADER}), a body
+     * that ends without the marker fails with {@link StreamTerminationException}: a clean
+     * connection close is not proof of complete content.
      */
-    private Flux<String> readSseLines(BufferedReader reader) {
-        return Flux.fromStream(reader.lines())
-                .filter(line -> line.startsWith(SSE_DATA_PREFIX))
-                .map(line -> line.substring(SSE_DATA_PREFIX.length()).trim())
-                .takeWhile(data -> !SSE_DONE_MARKER.equals(data))
-                .doOnNext(data -> log.debug("Received SSE data chunk"))
-                .filter(data -> !data.isEmpty());
+    private Flux<String> readSseLines(BufferedReader reader, String terminator) {
+        String marker = terminator != null ? terminator : SSE_DONE_MARKER;
+        AtomicBoolean sawMarker = new AtomicBoolean(false);
+        Flux<String> lines =
+                Flux.fromStream(reader.lines())
+                        .filter(line -> line.startsWith(SSE_DATA_PREFIX))
+                        .map(line -> line.substring(SSE_DATA_PREFIX.length()).trim())
+                        .doOnNext(
+                                data -> {
+                                    if (marker.equals(data)) {
+                                        sawMarker.set(true);
+                                    }
+                                })
+                        .takeWhile(data -> !marker.equals(data))
+                        .doOnNext(data -> log.debug("Received SSE data chunk"))
+                        .filter(data -> !data.isEmpty());
+        if (terminator == null) {
+            return lines;
+        }
+        // Runs only on natural completion, never on cancellation or error: the marker check must
+        // not fire when the caller cancelled mid-stream.
+        return lines.concatWith(
+                Flux.defer(
+                        () ->
+                                sawMarker.get()
+                                        ? Flux.<String>empty()
+                                        : Flux.<String>error(
+                                                new StreamTerminationException(terminator))));
     }
 
     /**
@@ -529,6 +565,23 @@ public class JdkHttpTransport implements HttpTransport {
             return cause;
         }
         return new HttpTransportException("SSE/NDJSON stream failed: " + e.getMessage(), e);
+    }
+
+    /**
+     * Closes the streaming response body when the stream terminates.
+     *
+     * <p>The body is closed on whichever thread delivers the terminal signal, including a
+     * cancelling thread. That is safe for the raw {@link InputStream}: closing it does not take
+     * the reader's monitor, so it cannot block behind a parked {@code readLine()} - it wakes that
+     * read up instead. The {@link java.io.BufferedReader} is deliberately never closed from
+     * cleanup for the same reason: its {@code close()} contends for the monitor held by the parked
+     * read, which is the hang this transport must avoid. The reader only wraps the body and owns no
+     * resource of its own, so leaving it to the collector is harmless.
+     *
+     * @param responseBody holder of the current body, cleared as it is closed
+     */
+    private void closeResponseBody(AtomicReference<InputStream> responseBody) {
+        closeQuietly(responseBody.getAndSet(null));
     }
 
     private void closeQuietly(AutoCloseable closeable) {
