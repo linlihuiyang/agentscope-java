@@ -110,6 +110,22 @@ Two things to plan for:
 - **Read semantics change with the collation.** Comparisons and prefix lookups (`session_id = ?`, `LIKE 'prefix%'`) become case-sensitive, so a lookup that previously matched `SESS-1` for `sess-1` will no longer match. Migrate at a point where no session is mid-flight.
 - **Rows may already be gone.** If two keys differing only in case were written before the migration, the second write overwrote the first through `ON DUPLICATE KEY UPDATE`; that lost row cannot be recovered from the table.
 
+### Long workspace and session keys (unified JDBC store)
+
+For `io.agentscope.extensions.jdbc.store.JdbcStore` in `agentscope-extensions-jdbc`, new PostgreSQL and H2 tables use `item_key VARCHAR(2048)` to accommodate workspace and session transcript paths. MySQL remains at 255 characters to keep its composite primary key within the InnoDB utf8mb4 index limit. The legacy `io.agentscope.extensions.mysql.store.JdbcStore` retains its original new-table lengths.
+
+Existing tables are never altered automatically. Back up the database and run the matching migration during a maintenance window (replace the table name or qualify it with your schema if configured):
+
+```sql
+-- PostgreSQL
+ALTER TABLE agentscope_store ALTER COLUMN item_key TYPE VARCHAR(2048);
+
+-- H2
+ALTER TABLE agentscope_store ALTER COLUMN item_key VARCHAR(2048);
+```
+
+Run only the statement for your database; do not apply this widening to MySQL. Automatic schema checks do not migrate existing column lengths.
+
 - The `(userId, sessionId)` pair is packed into the `session_id` column as `{userSegment}:{sessionId}` (`userSegment` = `userId`, or `__anon__` for anonymous sessions).
 - Single value: `item_index = 0`
 - List: `item_index = 0, 1, 2, ...` — one row per item; an extra row with `state_key='xxx:_hash'` is used for change detection.

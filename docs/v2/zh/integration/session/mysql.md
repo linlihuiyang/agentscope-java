@@ -110,6 +110,22 @@ ALTER TABLE agentscope_snapshots
 - **读取语义随排序规则一起改变。** 比较与前缀查询（`session_id = ?`、`LIKE 'prefix%'`）变为大小写敏感，原先用小写 `sess-1` 能查到 `SESS-1` 的场景将不再匹配。请在会话空闲窗口执行迁移。
 - **已有数据可能已经丢失。** 若迁移前曾写入两个仅大小写不同的键，第二次写入会通过 `ON DUPLICATE KEY UPDATE` 覆盖第一次，那一行无法从表中恢复。
 
+### 更长的 workspace 与会话键（统一 JDBC 存储）
+
+对 `agentscope-extensions-jdbc` 中的 `io.agentscope.extensions.jdbc.store.JdbcStore`，新建的 PostgreSQL 与 H2 表使用 `item_key VARCHAR(2048)`，以容纳 workspace 与会话转录路径。MySQL 仍保持 255 字符，避免复合主键超出 InnoDB utf8mb4 索引上限。legacy 的 `io.agentscope.extensions.mysql.store.JdbcStore` 新建表仍沿用原有长度。
+
+已存在的表不会被自动修改。请先备份数据库，然后在维护窗口内执行对应数据库的迁移语句（如配置过表名或 schema，请相应替换）：
+
+```sql
+-- PostgreSQL
+ALTER TABLE agentscope_store ALTER COLUMN item_key TYPE VARCHAR(2048);
+
+-- H2
+ALTER TABLE agentscope_store ALTER COLUMN item_key VARCHAR(2048);
+```
+
+只执行与所用数据库对应的语句；不要把该加宽操作应用到 MySQL。自动建表检查不会迁移已存在列的长度。
+
 - `(userId, sessionId)` 二元组会被打包进 `session_id` 列，形如 `{userSegment}:{sessionId}`（`userSegment` 为 `userId`，匿名 session 用 `__anon__`）。
 - 单值：`item_index = 0`
 - 列表：`item_index = 0,1,2,...`，每项一行；同时另存一行 `state_key='xxx:_hash'` 用作变更检测。
