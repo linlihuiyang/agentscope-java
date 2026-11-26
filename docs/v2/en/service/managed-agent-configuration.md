@@ -78,10 +78,11 @@ An empty model uses the default Model. Explicit `dashscope:qwen-max` resolves th
 | --- | --- |
 | Standard DashScope default | Configure `DASHSCOPE_API_KEY` and the default model on Dataplane |
 | Explicit DashScope model | Use `dashscope:model-name` with the extension and credentials present |
+| OpenAI-compatible model | Use `openai:model-name`, or `kimi` / `minimax` / `glm` / `deepseek` for those endpoints; set the provider's API key and, for gateways, its base URL. The standard Dataplane image bundles this extension |
 | Another ModelProvider | Build a custom Dataplane distribution containing its extension and connection/authentication settings |
 | Custom model object | Supply a default `Model` bean or register named models/factories with `ModelRegistry` in a custom Dataplane |
 
-The Java SDK provides [model extensions](/v2/en/integration/model/index) for OpenAI and compatible APIs, Anthropic, Gemini and Ollama. These are integration options; their existence in the SDK does not make every provider part of the standard Service image. The selected model must support the tool calls and input types your task uses.
+The Java SDK provides [model extensions](/v2/en/integration/model/index) for OpenAI and compatible APIs, Anthropic, Gemini and Ollama. The standard Service image bundles only the OpenAI-compatible extension; Anthropic, Gemini and Ollama still require a custom Dataplane distribution. The selected model must support the tool calls and input types your task uses.
 
 ## How resources relate to Agents and Sessions
 

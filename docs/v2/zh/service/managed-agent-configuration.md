@@ -78,10 +78,11 @@ Agent 的 model 留空时使用默认 Model；显式 `dashscope:qwen-max` 通过
 | --- | --- |
 | 标准 DashScope 默认模型 | 在 Dataplane 配置 `DASHSCOPE_API_KEY` 与默认模型 |
 | 显式 DashScope 模型 | 使用 `dashscope:model-name`；部署内有 DashScope 扩展与凭据 |
+| OpenAI 兼容模型 | 使用 `openai:model-name`，或对应端点的 `kimi` / `minimax` / `glm` / `deepseek`；配置该 provider 的 API key，网关场景再配置 base URL。标准 Dataplane 镜像已内置该扩展 |
 | 其他 ModelProvider | 自定义 Dataplane 发行包包含对应模型扩展，并配置该 provider 的连接与认证 |
 | 自定义模型对象 | 在自定义 Dataplane 中提供 `Model` bean 作为默认值，或用 `ModelRegistry` 注册命名模型/工厂 |
 
-Java SDK 提供 OpenAI 及兼容接口、Anthropic、Gemini、Ollama 等[模型扩展](/v2/zh/integration/model/index)。它们属于可集成能力；标准 Service 镜像不因 SDK 存在扩展就自动包含全部 provider。模型需要支持任务使用的工具调用和输入类型。
+Java SDK 提供 OpenAI 及兼容接口、Anthropic、Gemini、Ollama 等[模型扩展](/v2/zh/integration/model/index)。标准 Service 镜像只内置 OpenAI 兼容扩展；Anthropic、Gemini、Ollama 仍需自定义 Dataplane 发行包。模型需要支持任务使用的工具调用和输入类型。
 
 ## 资源如何关联到 Agent 和 Session
 
